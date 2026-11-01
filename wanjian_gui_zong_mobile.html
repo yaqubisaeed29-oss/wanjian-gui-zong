@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#070817">
+<title>万剑归宗 | Cyber Cultivation</title>
+<style>
+:root{--cyan:#42efff;--violet:#a66bff;--panel:rgba(8,12,35,.78)}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050611;color:#eafaff;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;touch-action:none}
+#scene{position:fixed;inset:0;display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+header{position:absolute;top:max(12px,env(safe-area-inset-top));left:0;right:0;text-align:center}
+h1{margin:0;font-size:clamp(19px,5vw,32px);letter-spacing:1px;color:#a8faff;text-shadow:0 0 8px #00dfff,0 0 22px #635bff}
+.subtitle{font-size:11px;color:#aab8dc;letter-spacing:2px;margin-top:3px}
+#status{position:absolute;top:78px;left:12px;direction:ltr;text-align:left;padding:8px 11px;border:1px solid #3deaff66;border-radius:10px;background:var(--panel);font-size:11px;color:#bffaff;backdrop-filter:blur(8px)}
+#help{position:absolute;top:78px;right:12px;max-width:190px;padding:9px 11px;border:1px solid #8e6aff66;border-radius:10px;background:var(--panel);font-size:11px;line-height:1.8;color:#dce4ff;backdrop-filter:blur(8px)}
+#help b{color:#65efff}
+#cameraBox{position:absolute;right:12px;bottom:calc(92px + env(safe-area-inset-bottom));width:112px;height:84px;border:1px solid #46eaff;border-radius:10px;overflow:hidden;background:#10152b;box-shadow:0 0 16px #00dfff44;opacity:.82}
+#webcam{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#cameraLabel{position:absolute;left:5px;bottom:3px;font-size:9px;color:white;text-shadow:0 1px 3px black;direction:ltr}
+#controls{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));left:10px;right:10px;display:flex;gap:7px;justify-content:center;pointer-events:auto;flex-wrap:wrap}
+button{border:1px solid #55eaff88;border-radius:999px;background:linear-gradient(135deg,#102747dd,#28164bdd);color:#eafaff;padding:10px 14px;font-size:12px;font-weight:650;box-shadow:0 0 14px #00cfff22;backdrop-filter:blur(8px)}
+button:active{transform:scale(.96);background:#174b67}
+button.primary{background:linear-gradient(100deg,#075a75,#52318a);border-color:#7bf4ff}
+#toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(17px,5vw,25px);font-weight:800;color:#c9fcff;text-shadow:0 0 14px #00dfff;text-align:center;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1}
+#footer{position:absolute;bottom:65px;left:12px;color:#8e9dbd;font-size:9px;direction:ltr}
+@media(max-height:520px){#help{top:65px}#status{top:65px}#cameraBox{width:90px;height:68px;bottom:65px}#controls{bottom:5px}button{padding:7px 11px}}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="hud">
+  <header><h1>万剑归宗</h1><div class="subtitle">CYBER CULTIVATION · SWORD CONTROL</div></header>
+  <div id="status">SYSTEM: READY<br>GESTURE: IDLE<br>SWORDS: 700</div>
+  <div id="help"><b>کنترل با دست</b><br>✋ کف دست باز: پراکندگی<br>✊ مشت: جمع‌آوری و حمله<br>👐 دو دست: گردباد<br><span style="color:#92a4c9">برای شروع، دوربین را روشن کن.</span></div>
+  <div id="cameraBox"><video id="webcam" autoplay playsinline muted></video><div id="cameraLabel">HAND TRACKING</div></div>
+  <div id="toast">万剑归宗</div>
+  <div id="footer">MOVE YOUR HAND TO CONTROL THE SWORDS</div>
+  <div id="controls">
+    <button class="primary" id="startBtn">روشن‌کردن دوربین</button>
+    <button id="openBtn">✋ کف دست</button>
+    <button id="fistBtn">✊ مشت</button>
+    <button id="vortexBtn">👐 گردباد</button>
+    <button id="resetBtn">بازنشانی</button>
+    <button id="fullBtn">تمام‌صفحه</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script>
+(() => {
+'use strict';
+const canvas=document.getElementById('scene');
+const statusEl=document.getElementById('status');
+const video=document.getElementById('webcam');
+const toast=document.getElementById('toast');
+const COUNT=700;
+let scene,camera,renderer,bladeMesh,guardMesh,handleMesh,glowMesh;
+let hands,mpCamera,stream=null,started=false;
+let mode='idle',hand={x:0,y:0},handCount=0,toastTimer=0;
+const dummy=new THREE.Object3D(), color=new THREE.Color();
+const data=[];
+const rand=(a,b)=>a+Math.random()*(b-a);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+function init3D(){
+ scene=new THREE.Scene(); scene.background=new THREE.Color(0x050611); scene.fog=new THREE.FogExp2(0x050611,.012);
+ camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,250);camera.position.set(0,0,34);
+ renderer=new THREE.WebGLRenderer({canvas,antialias:false,alpha:false,powerPreference:'low-power'});
+ renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.35));renderer.setSize(innerWidth,innerHeight);
+ renderer.outputColorSpace=THREE.SRGBColorSpace;
+ scene.add(new THREE.AmbientLight(0x8caaff,1.5));
+ const p1=new THREE.PointLight(0x00dfff,90,100);p1.position.set(-10,8,15);scene.add(p1);
+ const p2=new THREE.PointLight(0x884cff,75,100);p2.position.set(12,-7,8);scene.add(p2);
+
+ // A stylized sword made from three instanced parts, keeping draw calls low.
+ const bladeGeo=new THREE.ConeGeometry(.105,1.45,4,1);
+ bladeGeo.rotateX(Math.PI/2); // blade points along local +Z
+ const guardGeo=new THREE.BoxGeometry(.62,.09,.13);
+ const gripGeo=new THREE.CylinderGeometry(.055,.07,.48,5);
+ const bladeMat=new THREE.MeshBasicMaterial({color:0x65f6ff});
+ const guardMat=new THREE.MeshBasicMaterial({color:0xa77aff});
+ const gripMat=new THREE.MeshBasicMaterial({color:0xd8eaff});
+ bladeMesh=new THREE.InstancedMesh(bladeGeo,bladeMat,COUNT);
+ guardMesh=new THREE.InstancedMesh(guardGeo,guardMat,COUNT);
+ handleMesh=new THREE.InstancedMesh(gripGeo,gripMat,COUNT);
+ bladeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ guardMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ handleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ scene.add(bladeMesh,guardMesh,handleMesh);
+
+ // Background stars.
+ const starGeo=new THREE.BufferGeometry(),positions=[];
+ for(let i=0;i<550;i++)positions.push(rand(-65,65),rand(-42,42),rand(-55,-5));
+ starGeo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+ const stars=new THREE.Points(starGeo,new THREE.PointsMaterial({color:0x6b9cff,size:.075,transparent:true,opacity:.75}));
+ scene.add(stars);
+
+ for(let i=0;i<COUNT;i++){
+  data.push({x:rand(-23,23),y:rand(-15,15),z:rand(-12,8),vx:0,vy:0,vz:0,
+   sx:rand(-22,22),sy:rand(-14,14),sz:rand(-10,8),phase:rand(0,Math.PI*2),scale:rand(.72,1.18)});
+ }
+ layoutInstances();
+ animate();
+}
+function layoutInstances(){
+ for(let i=0;i<COUNT;i++){
+  const d=data[i];dummy.position.set(d.x,d.y,d.z);dummy.rotation.set(0,0,0);dummy.scale.setScalar(d.scale);dummy.updateMatrix();bladeMesh.setMatrixAt(i,dummy.matrix);
+  dummy.position.set(d.x,d.y,d.z-0.76);dummy.rotation.set(0,0,0);dummy.scale.set(d.scale,d.scale,d.scale);dummy.updateMatrix();guardMesh.setMatrixAt(i,dummy.matrix);
+  dummy.position.set(d.x,d.y,d.z-1.05);dummy.rotation.set(Math.PI/2,0,0);dummy.scale.setScalar(d.scale);dummy.updateMatrix();handleMesh.setMatrixAt(i,dummy.matrix);
+ }
+ bladeMesh.instanceMatrix.needsUpdate=true;guardMesh.instanceMatrix.needsUpdate=true;handleMesh.instanceMatrix.needsUpdate=true;
+}
+function setMode(next){
+ mode=next;
+ const names={idle:'IDLE',swarm:'OPEN PALM',attack:'FIST / ATTACK',vortex:'TWO HANDS'};
+ statusEl.innerHTML='SYSTEM: '+(started?'CAMERA ON':'READY')+'<br>GESTURE: '+names[mode]+'<br>SWORDS: '+COUNT;
+ toast.textContent=({swarm:'散！ پراکندگی شمشیرها',attack:'斬！ حمله',vortex:'旋風！ گردباد',idle:'万剑归宗'})[mode]||'万剑归宗';
+ toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),850);
+}
+function updateInstances(t){
+ const spread=mode==='swarm',attack=mode==='attack',vortex=mode==='vortex';
+ const hx=hand.x,hy=hand.y;
+ for(let i=0;i<COUNT;i++){
+  const d=data[i];let tx,ty,tz;
+  if(attack){
+   const a=i*2.39996, r=1.3+Math.sqrt(i/COUNT)*3.8;
+   tx=hx+Math.cos(a)*r;ty=hy+Math.sin(a)*r;tz=2+Math.sin(a*2)*1.5;
+  }else if(vortex){
+   const a=t*.0017+i*.115,r=3.5+(i%19)*.29;
+   tx=hx+Math.cos(a)*r;ty=hy+Math.sin(a)*r;tz=Math.sin(a*2+i*.03)*5;
+  }else if(spread){
+   const a=i*2.39996+t*.00025,r=6+(i%13)*.82;
+   tx=hx+Math.cos(a)*r;ty=hy+Math.sin(a)*r;tz=Math.sin(a*1.7+t*.001)*5;
+  }else{
+   tx=d.sx+Math.sin(t*.00055+d.phase)*1.2;
+   ty=d.sy+Math.cos(t*.0007+d.phase)*1.2;
+   tz=d.sz+Math.sin(t*.00045+d.phase)*1.1;
+  }
+  const ease=attack?.105:(vortex?.075:(spread?.075:.018));
+  d.x+=(tx-d.x)*ease;d.y+=(ty-d.y)*ease;d.z+=(tz-d.z)*ease;
+  // Point each blade toward the hand with a slight animated roll.
+  dummy.position.set(d.x,d.y,d.z);
+  const dx=hx-d.x,dy=hy-d.y;
+  dummy.rotation.set(0,0,Math.atan2(dy,dx)-Math.PI/2 + (vortex?Math.sin(t*.002+i)*.2:0));
+  dummy.scale.setScalar(d.scale);dummy.updateMatrix();bladeMesh.setMatrixAt(i,dummy.matrix);
+  dummy.position.set(d.x,d.y,d.z-.76*d.scale);dummy.rotation.set(0,0,dummy.rotation.z);dummy.scale.set(d.scale,d.scale,d.scale);dummy.updateMatrix();guardMesh.setMatrixAt(i,dummy.matrix);
+  dummy.position.set(d.x,d.y,d.z-1.05*d.scale);dummy.rotation.set(Math.PI/2,0,Math.atan2(dy,dx)-Math.PI/2);dummy.scale.setScalar(d.scale);dummy.updateMatrix();handleMesh.setMatrixAt(i,dummy.matrix);
+ }
+ bladeMesh.instanceMatrix.needsUpdate=true;guardMesh.instanceMatrix.needsUpdate=true;handleMesh.instanceMatrix.needsUpdate=true;
+}
+function animate(t=0){
+ requestAnimationFrame(animate);updateInstances(t);renderer.render(scene,camera);
+}
+function resize(){if(!camera||!renderer)return;camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.35));}
+addEventListener('resize',resize);
+
+function fingerExtended(lm,tip,pip){return lm[tip].y<lm[pip].y-.015;}
+function classify(lm){
+ const extended=[fingerExtended(lm,8,6),fingerExtended(lm,12,10),fingerExtended(lm,16,14),fingerExtended(lm,20,18)];
+ return extended.filter(Boolean).length>=3?'swarm':'attack';
+}
+async function startCamera(){
+ if(started)return;
+ if(!navigator.mediaDevices?.getUserMedia){alert('مرورگر شما دسترسی دوربین را پشتیبانی نمی‌کند. Chrome را به‌روز کنید.');return;}
+ if(!window.Hands||!window.Camera){alert('کتابخانه تشخیص دست بارگذاری نشده است. اتصال اینترنت را بررسی و صفحه را دوباره باز کنید.');return;}
+ const btn=document.getElementById('startBtn');btn.textContent='در حال راه‌اندازی...';btn.disabled=true;
+ try{
+  hands=new Hands({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+  hands.setOptions({maxNumHands:2,modelComplexity:0,minDetectionConfidence:.55,minTrackingConfidence:.5});
+  hands.onResults(results=>{
+   const list=results.multiHandLandmarks||[];handCount=list.length;
+   if(list.length>=2){const a=list[0][9],b=list[1][9];hand.x=((a.x+b.x)/2-.5)*-30;hand.y=-(((a.y+b.y)/2)-.5)*21;setMode('vortex');}
+   else if(list.length===1){const lm=list[0];hand.x=(lm[9].x-.5)*-30;hand.y=-(lm[9].y-.5)*21;setMode(classify(lm));}
+   else setMode('idle');
+  });
+  mpCamera=new Camera(video,{onFrame:async()=>{if(hands)await hands.send({image:video});},width:480,height:360});
+  await mpCamera.start();started=true;btn.textContent='دوربین روشن است';btn.disabled=false;
+  statusEl.innerHTML='SYSTEM: CAMERA ON<br>GESTURE: IDLE<br>SWORDS: '+COUNT;
+ }catch(e){console.error(e);btn.textContent='روشن‌کردن دوربین';btn.disabled=false;alert('دوربین روشن نشد. صفحه را با HTTPS باز کن و اجازه Camera را بده.');}
+}
+document.getElementById('startBtn').addEventListener('click',startCamera);
+document.getElementById('openBtn').addEventListener('click',()=>setMode('swarm'));
+document.getElementById('fistBtn').addEventListener('click',()=>setMode('attack'));
+document.getElementById('vortexBtn').addEventListener('click',()=>setMode('vortex'));
+document.getElementById('resetBtn').addEventListener('click',()=>{for(const d of data){d.sx=rand(-22,22);d.sy=rand(-14,14);d.sz=rand(-10,8);}setMode('idle');});
+document.getElementById('fullBtn').addEventListener('click',async()=>{try{if(!document.fullscreenElement)await document.documentElement.requestFullscreen();else await document.exitFullscreen();}catch(e){}});
+init3D();
+})();
+</script>
+</body>
+</html>
